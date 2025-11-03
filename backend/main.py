@@ -2,14 +2,26 @@ from typing import List, Optional
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.openapi.utils import get_openapi
 from sqlmodel import Session, select
 from sqlalchemy import func
-from .base_datos import inicializar_bd, obtener_sesion
-from .models import User, Patient, Appointment, MedicalNote, VitalSign, Photo
-from .esquemas import Token, UserCreate, UserOut, PatientCreate, PatientOut, AppointmentCreate, AppointmentOut, MedicalNoteCreate, MedicalNoteOut, VitalSignCreate, VitalSignOut, PhotoCreate, PhotoOut
-from .auth import hash_password, verify_password, crear_token_acceso, obtener_usuario_actual
 
-app = FastAPI(title="MedApp API", version="1.0.0", description="API del sistema MedApp para registro de pacientes y citas.")
+from .base_datos import inicializar_bd, obtener_sesion
+from .models import User, Patient, Appointment
+from .esquemas import (
+    Token, UserCreate, UserOut,
+    PatientCreate, PatientOut,
+    AppointmentCreate, AppointmentOut,
+)
+from .auth import (
+    hash_password, verify_password,
+    crear_token_acceso, obtener_usuario_actual
+)
+
+app = FastAPI(
+    title="MedApp API",
+    version="1.0.0",
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -23,78 +35,110 @@ app.add_middleware(
 def startup_event():
     inicializar_bd()
 
-@app.get("/health", summary="Comprobar estado", tags=["Sistema"])
+@app.get("/health", tags=["Sistema"])
 def estado():
     return {"status": "ok"}
 
-@app.post("/auth/register", response_model=UserOut, summary="Registrar usuario", tags=["Autenticación"])
+
+@app.post("/auth/register", response_model=UserOut, tags=["Autenticación"])
 def registrar_usuario(usuario: UserCreate, session: Session = Depends(obtener_sesion)):
     existe = session.exec(select(User).where(User.email == usuario.email)).first()
     if existe:
         raise HTTPException(status_code=400, detail="Email ya registrado")
-    usuario_model = User(name=usuario.name, email=usuario.email, password_hash=hash_password(usuario.password))
-    session.add(usuario_model)
+    u = User(name=usuario.name, email=usuario.email, password_hash=hash_password(usuario.password))
+    session.add(u)
     session.commit()
-    session.refresh(usuario_model)
-    return UserOut(id=usuario_model.id, name=usuario_model.name, email=usuario_model.email)
+    session.refresh(u)
+    return UserOut(id=u.id, name=u.name, email=u.email)
 
-@app.post("/auth/login", response_model=Token, summary="Iniciar sesión", tags=["Autenticación"])
+@app.post("/auth/login", response_model=Token, tags=["Autenticación"])
 def iniciar_sesion(form: OAuth2PasswordRequestForm = Depends(), session: Session = Depends(obtener_sesion)):
-    usuario = session.exec(select(User).where(User.email == form.username)).first()
-    if not usuario or not verify_password(form.password, usuario.password_hash):
+    u = session.exec(select(User).where(User.email == form.username)).first()
+    if not u or not verify_password(form.password, u.password_hash):
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
-    token = crear_token_acceso({"sub": str(usuario.id)})
+    token = crear_token_acceso({"sub": str(u.id)})
     return Token(access_token=token)
 
-@app.get("/patients", response_model=List[PatientOut], summary="Listar pacientes", tags=["Pacientes"])
-def listar_pacientes(search: Optional[str] = None, usuario: User = Depends(obtener_usuario_actual), session: Session = Depends(obtener_sesion)):
-    query = select(Patient)
+
+@app.get("/patients", response_model=List[PatientOut], tags=["Pacientes"])
+def listar_pacientes(
+    search: Optional[str] = None,
+    user: User = Depends(obtener_usuario_actual),
+    session: Session = Depends(obtener_sesion),
+):
+    q = select(Patient)
     if search:
-        query = query.where(func.lower(Patient.name).like(f"%{search.lower()}%"))
-    return session.exec(query).all()
+        q = q.where(func.lower(Patient.name).like(f"%{search.lower()}%"))
+    return session.exec(q).all()
 
-@app.post("/patients", response_model=PatientOut, summary="Crear paciente", tags=["Pacientes"])
-def crear_paciente(p: PatientCreate, usuario: User = Depends(obtener_usuario_actual), session: Session = Depends(obtener_sesion)):
-    paciente = Patient(**p.dict())
-    session.add(paciente)
+@app.post("/patients", response_model=PatientOut, tags=["Pacientes"])
+def crear_paciente(
+    p: PatientCreate,
+    user: User = Depends(obtener_usuario_actual),
+    session: Session = Depends(obtener_sesion),
+):
+    pac = Patient(**p.dict())
+    session.add(pac)
     session.commit()
-    session.refresh(paciente)
-    return PatientOut(**paciente.dict())
+    session.refresh(pac)
+    return PatientOut(**pac.dict())
 
-@app.get("/patients/{pid}", response_model=PatientOut, summary="Obtener paciente", tags=["Pacientes"])
-def obtener_paciente(pid: int, usuario: User = Depends(obtener_usuario_actual), session: Session = Depends(obtener_sesion)):
-    paciente = session.get(Patient, pid)
-    if not paciente:
+@app.get("/patients/{pid}", response_model=PatientOut, tags=["Pacientes"])
+def obtener_paciente(
+    pid: int,
+    user: User = Depends(obtener_usuario_actual),
+    session: Session = Depends(obtener_sesion),
+):
+    pac = session.get(Patient, pid)
+    if not pac:
         raise HTTPException(status_code=404, detail="Paciente no encontrado")
-    return PatientOut(**paciente.dict())
+    return PatientOut(**pac.dict())
 
-@app.put("/patients/{pid}", response_model=PatientOut, summary="Actualizar paciente", tags=["Pacientes"])
-def actualizar_paciente(pid: int, p: PatientCreate, usuario: User = Depends(obtener_usuario_actual), session: Session = Depends(obtener_sesion)):
-    paciente = session.get(Patient, pid)
-    if not paciente:
+@app.put("/patients/{pid}", response_model=PatientOut, tags=["Pacientes"])
+def actualizar_paciente(
+    pid: int,
+    p: PatientCreate,
+    user: User = Depends(obtener_usuario_actual),
+    session: Session = Depends(obtener_sesion),
+):
+    pac = session.get(Patient, pid)
+    if not pac:
         raise HTTPException(status_code=404, detail="Paciente no encontrado")
     for k, v in p.dict().items():
-        setattr(paciente, k, v)
-    session.add(paciente)
+        setattr(pac, k, v)
+    session.add(pac)
     session.commit()
-    session.refresh(paciente)
-    return PatientOut(**paciente.dict())
+    session.refresh(pac)
+    return PatientOut(**pac.dict())
 
-@app.delete("/patients/{pid}", summary="Eliminar paciente", tags=["Pacientes"])
-def eliminar_paciente(pid: int, usuario: User = Depends(obtener_usuario_actual), session: Session = Depends(obtener_sesion)):
-    paciente = session.get(Patient, pid)
-    if not paciente:
+@app.delete("/patients/{pid}", tags=["Pacientes"])
+def eliminar_paciente(
+    pid: int,
+    user: User = Depends(obtener_usuario_actual),
+    session: Session = Depends(obtener_sesion),
+):
+    pac = session.get(Patient, pid)
+    if not pac:
         raise HTTPException(status_code=404, detail="Paciente no encontrado")
-    session.delete(paciente)
+    session.delete(pac)
     session.commit()
     return {"ok": True}
 
-@app.get("/patients/{pid}/appointments", response_model=List[AppointmentOut], summary="Listar citas", tags=["Citas"])
-def listar_citas(pid: int, usuario: User = Depends(obtener_usuario_actual), session: Session = Depends(obtener_sesion)):
+@app.get("/patients/{pid}/appointments", response_model=List[AppointmentOut], tags=["Citas"])
+def listar_citas(
+    pid: int,
+    user: User = Depends(obtener_usuario_actual),
+    session: Session = Depends(obtener_sesion),
+):
     return session.exec(select(Appointment).where(Appointment.patient_id == pid)).all()
 
-@app.post("/patients/{pid}/appointments", response_model=AppointmentOut, summary="Crear cita", tags=["Citas"])
-def crear_cita(pid: int, ap: AppointmentCreate, usuario: User = Depends(obtener_usuario_actual), session: Session = Depends(obtener_sesion)):
+@app.post("/patients/{pid}/appointments", response_model=AppointmentOut, tags=["Citas"])
+def crear_cita(
+    pid: int,
+    ap: AppointmentCreate,
+    user: User = Depends(obtener_usuario_actual),
+    session: Session = Depends(obtener_sesion),
+):
     if not session.get(Patient, pid):
         raise HTTPException(status_code=404, detail="Paciente no encontrado")
     cita = Appointment(patient_id=pid, **ap.dict())
@@ -103,8 +147,13 @@ def crear_cita(pid: int, ap: AppointmentCreate, usuario: User = Depends(obtener_
     session.refresh(cita)
     return AppointmentOut(**cita.dict())
 
-@app.put("/appointments/{aid}", response_model=AppointmentOut, summary="Actualizar cita", tags=["Citas"])
-def actualizar_cita(aid: int, ap: AppointmentCreate, usuario: User = Depends(obtener_usuario_actual), session: Session = Depends(obtener_sesion)):
+@app.put("/appointments/{aid}", response_model=AppointmentOut, tags=["Citas"])
+def actualizar_cita(
+    aid: int,
+    ap: AppointmentCreate,
+    user: User = Depends(obtener_usuario_actual),
+    session: Session = Depends(obtener_sesion),
+):
     cita = session.get(Appointment, aid)
     if not cita:
         raise HTTPException(status_code=404, detail="Cita no encontrada")
@@ -115,11 +164,30 @@ def actualizar_cita(aid: int, ap: AppointmentCreate, usuario: User = Depends(obt
     session.refresh(cita)
     return AppointmentOut(**cita.dict())
 
-@app.delete("/appointments/{aid}", summary="Eliminar cita", tags=["Citas"])
-def eliminar_cita(aid: int, usuario: User = Depends(obtener_usuario_actual), session: Session = Depends(obtener_sesion)):
+@app.delete("/appointments/{aid}", tags=["Citas"])
+def eliminar_cita(
+    aid: int,
+    user: User = Depends(obtener_usuario_actual),
+    session: Session = Depends(obtener_sesion),
+):
     cita = session.get(Appointment, aid)
     if not cita:
         raise HTTPException(status_code=404, detail="Cita no encontrada")
     session.delete(cita)
     session.commit()
     return {"ok": True}
+
+
+
+def openapi_sin_descripciones():
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
+    for path in schema.get("paths", {}).values():
+        for method in path.values():
+            method.pop("summary", None)
+            method.pop("description", None)
+    app.openapi_schema = schema
+    return schema
+
+app.openapi = openapi_sin_descripciones
